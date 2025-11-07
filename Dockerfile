@@ -11,7 +11,7 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/src/frontend ./src/frontend
 COPY package*.json ./
 RUN npm install --omit=dev
-COPY data ./data
+RUN mkdir -p /app/data
 EXPOSE 3000
 VOLUME ["/app/data"]
 CMD ["node", "dist/backend.js"]
