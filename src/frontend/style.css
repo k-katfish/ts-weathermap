@@ -1,0 +1,410 @@
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap");
+
+:root {
+    color-scheme: dark;
+    font-family: "Inter", "Segoe UI", sans-serif;
+    background-color: #050b16;
+    color: #f8fafc;
+}
+
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    min-height: 100vh;
+    overflow: hidden;
+    background: radial-gradient(circle at 20% 20%, rgba(15, 23, 42, 0.9), #020617 70%);
+}
+
+canvas {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+    display: block;
+    touch-action: none;
+}
+
+#hud {
+    position: fixed;
+    top: 1.5rem;
+    right: 1.5rem;
+    width: min(360px, calc(100vw - 3rem));
+    max-height: calc(100vh - 3rem);
+    padding: 1.25rem;
+    overflow-y: auto;
+    background: rgba(8, 15, 34, 0.78);
+    border: 1px solid rgba(59, 130, 246, 0.15);
+    border-radius: 18px;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 18px 45px rgba(15, 23, 42, 0.45);
+    transition: transform 0.3s ease, opacity 0.3s ease;
+    will-change: transform, opacity;
+}
+
+#hud.hidden {
+    transform: translateX(calc(100% + 2rem));
+    opacity: 0;
+    pointer-events: none;
+}
+
+.hud-empty {
+    display: grid;
+    place-items: center;
+    min-height: 240px;
+    color: rgba(226, 232, 240, 0.85);
+    font-size: 0.95rem;
+}
+
+.hud-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 1rem;
+}
+
+.hud-header h1 {
+    margin: 0;
+    font-size: 1.3rem;
+    font-weight: 600;
+}
+
+.hud-subtitle {
+    margin: 0.25rem 0 0 0;
+    font-size: 0.85rem;
+    color: rgba(226, 232, 240, 0.72);
+}
+
+.hud-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.75rem;
+    font-size: 0.75rem;
+    color: rgba(226, 232, 240, 0.7);
+}
+
+.hud-actions {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.layout-toggle {
+    align-self: flex-start;
+    padding: 0.35rem 0.85rem;
+    border-radius: 999px;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    background: rgba(37, 99, 235, 0.1);
+    color: #bfdbfe;
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s ease, border 0.2s ease;
+}
+
+.layout-toggle.active {
+    background: rgba(37, 99, 235, 0.25);
+    border-color: rgba(96, 165, 250, 0.7);
+    color: #e0f2fe;
+}
+
+.layout-toggle:hover {
+    background: rgba(37, 99, 235, 0.2);
+}
+
+.sidebar-toggle {
+    padding: 0.35rem 0.85rem;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.35);
+    background: rgba(15, 23, 42, 0.35);
+    color: rgba(226, 232, 240, 0.9);
+    font-size: 0.75rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s ease, border 0.2s ease;
+}
+
+.sidebar-toggle:hover {
+    background: rgba(30, 41, 59, 0.65);
+}
+
+.legend-item {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+.legend-dot {
+    display: inline-block;
+    width: 0.65rem;
+    height: 0.65rem;
+    border-radius: 50%;
+}
+
+.legend-dot {
+    border: 1px solid rgba(15, 23, 42, 0.6);
+    box-shadow: 0 0 8px rgba(15, 23, 42, 0.4) inset;
+}
+
+.hud-content {
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+
+section {
+    margin-bottom: 1.25rem;
+}
+
+section h2 {
+    margin: 0 0 0.75rem 0;
+    font-size: 0.95rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: rgba(148, 163, 184, 0.95);
+}
+
+.link-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.link-list li {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.5rem 0.75rem;
+    border-radius: 10px;
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid rgba(59, 130, 246, 0.08);
+    font-size: 0.85rem;
+}
+
+.metric {
+    font-variant-numeric: tabular-nums;
+    color: rgba(248, 250, 252, 0.82);
+}
+
+.router-grid {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.router-card {
+    padding: 0.75rem;
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px solid rgba(59, 130, 246, 0.12);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.router-card header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+}
+
+.router-card h3 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+.status-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.2rem 0.6rem;
+    border-radius: 999px;
+    font-size: 0.7rem;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: rgba(59, 130, 246, 0.16);
+    color: rgba(191, 219, 254, 0.95);
+}
+
+.router-card.status-warning .status-pill {
+    background: rgba(244, 114, 182, 0.12);
+    color: #f59e0b;
+}
+
+.router-card.status-critical .status-pill,
+.router-card.status-error .status-pill {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+}
+
+.router-body {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.iface-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+
+.iface-name {
+    font-size: 0.85rem;
+    color: rgba(229, 231, 235, 0.9);
+}
+
+.iface-bars {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.util-bar {
+    flex: 1;
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(30, 41, 59, 0.85);
+    overflow: hidden;
+    border: 1px solid rgba(59, 130, 246, 0.12);
+}
+
+.util-bar-fill {
+    display: block;
+    height: 100%;
+}
+
+.iface-metrics {
+    display: flex;
+    gap: 0.65rem;
+    font-size: 0.75rem;
+    color: rgba(148, 163, 184, 0.95);
+}
+
+.iface-metrics .metric {
+    color: rgba(226, 232, 240, 0.9);
+}
+
+.iface-metrics .up {
+    color: #38bdf8;
+}
+
+.iface-metrics .down {
+    color: #a855f7;
+}
+
+.iface-error,
+.router-error {
+    font-size: 0.75rem;
+    color: #fca5a5;
+    background: rgba(239, 68, 68, 0.08);
+    border: 1px solid rgba(239, 68, 68, 0.25);
+    padding: 0.4rem 0.55rem;
+    border-radius: 8px;
+}
+
+.router-error {
+    margin: 0;
+}
+
+.layout-panel {
+    padding: 0.75rem;
+    border-radius: 12px;
+    background: rgba(15, 23, 42, 0.55);
+    border: 1px dashed rgba(59, 130, 246, 0.4);
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.layout-panel textarea {
+    width: 100%;
+    min-height: 140px;
+    border-radius: 10px;
+    border: 1px solid rgba(59, 130, 246, 0.25);
+    background: rgba(2, 6, 23, 0.6);
+    color: #e0f2fe;
+    font-family: "Fira Code", "SFMono-Regular", Consolas, monospace;
+    font-size: 0.75rem;
+    padding: 0.6rem;
+    resize: vertical;
+}
+
+.layout-panel-actions {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.layout-panel-actions button {
+    flex: 1;
+    padding: 0.4rem 0.75rem;
+    border-radius: 10px;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    background: rgba(37, 99, 235, 0.2);
+    color: #dbeafe;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s ease, border 0.2s ease;
+}
+
+.layout-panel-actions button:hover:not(:disabled) {
+    background: rgba(37, 99, 235, 0.3);
+}
+
+.layout-panel-actions button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+#sidebar-peek {
+    position: fixed;
+    top: 50%;
+    right: 1rem;
+    transform: translateY(-50%);
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: 1px solid rgba(59, 130, 246, 0.35);
+    background: rgba(2, 6, 23, 0.85);
+    color: #bfdbfe;
+    font-size: 1.1rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    box-shadow: 0 10px 22px rgba(2, 6, 23, 0.55);
+    transition: background 0.2s ease, transform 0.2s ease, opacity 0.2s ease;
+    z-index: 20;
+}
+
+#sidebar-peek:hover {
+    background: rgba(30, 58, 138, 0.9);
+}
+
+#hud.hidden + #sidebar-peek {
+    opacity: 1;
+}
+
+#hud:not(.hidden) + #sidebar-peek {
+    opacity: 0.6;
+}
+
+@media (max-width: 720px) {
+    #hud {
+        left: 1rem;
+        right: 1rem;
+        width: calc(100vw - 2rem);
+    }
+}
