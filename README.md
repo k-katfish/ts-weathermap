@@ -4,6 +4,8 @@ A modern TypeScript re-imagining of the classic network weathermap: real-time
 SNMP polling, dynamic back-end streaming, and a canvas-based front-end for
 at-a-glance infrastructure health.
 
+> **Disclaimer**: This project was generated almost entirely using AI tools.
+
 ## Features
 
 - **Real-time telemetry** – The backend polls every configured router interface,
