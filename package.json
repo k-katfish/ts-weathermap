@@ -7,11 +7,12 @@
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
-    "build": "esbuild src/backend.ts --bundle --platform=node --format=cjs --outdir=dist && esbuild src/frontend/main.ts --bundle --outfile=src/frontend/main.js",
+    "build": "esbuild src/backend.ts --bundle --platform=node --format=cjs --external:canvas --outdir=dist && esbuild src/frontend/main.ts --bundle --outfile=src/frontend/main.js",
     "start": "node dist/backend.js",
     "dev": "tsc --watch"
   },
   "dependencies": {
+    "canvas": "^3.2.0",
     "express": "^4.21.2",
     "js-yaml": "^4.1.0",
     "net-snmp": "^3.11.1",
