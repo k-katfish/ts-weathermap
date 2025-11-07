@@ -1,0 +1,7 @@
+services:
+  weathermap:
+    image: ghcr.io/k-katfish/ts-weathermap:latest
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./data:/app/data
