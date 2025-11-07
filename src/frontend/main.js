@@ -1,13 +1,79 @@
 "use strict";
 (() => {
   var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __esm = (fn, res) => function __init() {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  };
   var __commonJS = (cb, mod) => function __require() {
     return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
   };
 
+  // src/shared/path-utils.ts
+  var clonePosition, splitPathAtHalf;
+  var init_path_utils = __esm({
+    "src/shared/path-utils.ts"() {
+      "use strict";
+      clonePosition = (point) => ({ x: point.x, y: point.y });
+      splitPathAtHalf = (path) => {
+        if (path.length === 0) {
+          const origin = { x: 0, y: 0 };
+          return { midpoint: origin, firstHalf: [origin], secondHalf: [origin] };
+        }
+        if (path.length === 1) {
+          const point = clonePosition(path[0]);
+          return { midpoint: point, firstHalf: [point], secondHalf: [point] };
+        }
+        let totalLength = 0;
+        const segmentLengths = [];
+        for (let i = 0; i < path.length - 1; i++) {
+          const start = path[i];
+          const end = path[i + 1];
+          const length = Math.hypot(end.x - start.x, end.y - start.y);
+          segmentLengths.push(length);
+          totalLength += length;
+        }
+        if (totalLength === 0) {
+          const midpoint = clonePosition(path[Math.floor(path.length / 2)]);
+          return {
+            midpoint,
+            firstHalf: [clonePosition(path[0]), midpoint],
+            secondHalf: [midpoint, clonePosition(path[path.length - 1])]
+          };
+        }
+        const halfway = totalLength / 2;
+        let accumulated = 0;
+        for (let i = 0; i < segmentLengths.length; i++) {
+          const length = segmentLengths[i];
+          const start = path[i];
+          const end = path[i + 1];
+          if (accumulated + length >= halfway) {
+            const remaining = halfway - accumulated;
+            const ratio = length === 0 ? 0 : remaining / length;
+            const midpoint = {
+              x: start.x + (end.x - start.x) * ratio,
+              y: start.y + (end.y - start.y) * ratio
+            };
+            const firstHalf = path.slice(0, i + 1).map(clonePosition);
+            firstHalf.push(midpoint);
+            const secondHalf = [midpoint, ...path.slice(i + 1).map(clonePosition)];
+            return { midpoint, firstHalf, secondHalf };
+          }
+          accumulated += length;
+        }
+        const fallbackMidpoint = clonePosition(path[path.length - 1]);
+        return {
+          midpoint: fallbackMidpoint,
+          firstHalf: path.map(clonePosition),
+          secondHalf: [fallbackMidpoint]
+        };
+      };
+    }
+  });
+
   // src/frontend/main.ts
   var require_main = __commonJS({
     "src/frontend/main.ts"() {
+      init_path_utils();
       var canvas = document.querySelector("canvas");
       var ctx = canvas.getContext("2d", { alpha: false });
       var hud = document.querySelector("#hud");
@@ -33,6 +99,15 @@
         pointerId: null,
         offset: null
       };
+      var htmlEscapeMap = {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;"
+      };
+      var escapeHtml = (value) => value.replace(/[&<>"']/g, (char) => htmlEscapeMap[char] ?? char);
+      var safeText = (value) => escapeHtml(String(value ?? ""));
       var backgroundImage = new Image();
       var backgroundLoaded = false;
       var roundedRect = (context, x, y, width, height, radius) => {
@@ -74,6 +149,10 @@
         const bucket = UTILIZATION_BUCKETS.find((range) => utilization >= range.min && utilization < range.max) ?? UTILIZATION_BUCKETS[UTILIZATION_BUCKETS.length - 1];
         return bucket.color;
       };
+      var interfaceUtilization = (iface) => {
+        if (!iface) return null;
+        return Math.max(iface.inUtilization, iface.outUtilization);
+      };
       var formatPercent = (value) => {
         if (value === null || value === void 0 || Number.isNaN(value)) {
           return "\u2014";
@@ -105,19 +184,34 @@
         routers.forEach((router) => map.set(router.id, router));
         return map;
       };
+      var interfaceDefinitionCapacity = (routerId, ifaceName) => {
+        if (!topology) return null;
+        const router = topology.routers.find((candidate) => candidate.id === routerId);
+        const iface = router?.interfaces.find((candidate) => candidate.name === ifaceName);
+        return iface?.maxBandwidth ?? null;
+      };
+      var interfaceMetricCapacity = (routerId, ifaceName) => {
+        const routerMetrics = metrics?.routers[routerId];
+        const ifaceMetrics = routerMetrics?.interfaces[ifaceName];
+        return ifaceMetrics?.maxBandwidth ?? null;
+      };
       var rebuildLinkCapacities = () => {
         if (!topology) return;
-        const routerMap = buildRouterMap(topology.routers);
         const capacities = [];
         const map = /* @__PURE__ */ new Map();
         topology.links.forEach((link) => {
-          const forwardRouter = routerMap.get(link.from);
-          const reverseRouter = routerMap.get(link.to);
-          const forwardCapacity = forwardRouter?.interfaces.find((iface) => iface.name === link.ifaceFrom)?.maxBandwidth ?? null;
-          const reverseCapacity = reverseRouter?.interfaces.find((iface) => iface.name === link.ifaceTo)?.maxBandwidth ?? null;
-          const candidates = [forwardCapacity, reverseCapacity].filter(
+          const forwardMetric = interfaceMetricCapacity(link.from, link.ifaceFrom);
+          const reverseMetric = interfaceMetricCapacity(link.to, link.ifaceTo);
+          let candidates = [forwardMetric, reverseMetric].filter(
             (value) => typeof value === "number" && value > 0
           );
+          if (candidates.length === 0) {
+            const forwardDefinition = interfaceDefinitionCapacity(link.from, link.ifaceFrom);
+            const reverseDefinition = interfaceDefinitionCapacity(link.to, link.ifaceTo);
+            candidates = [forwardDefinition, reverseDefinition].filter(
+              (value) => typeof value === "number" && value > 0
+            );
+          }
           const capacity = candidates.length ? Math.min(...candidates) : null;
           if (capacity) {
             capacities.push(capacity);
@@ -218,18 +312,6 @@
           ctx.fillRect(0, 0, renderState.baseWidth, renderState.baseHeight);
         }
       };
-      var getPathMidpoint = (path) => {
-        if (path.length === 0) {
-          return { x: 0, y: 0 };
-        }
-        if (path.length === 2) {
-          return {
-            x: (path[0].x + path[1].x) / 2,
-            y: (path[0].y + path[1].y) / 2
-          };
-        }
-        return path[Math.floor(path.length / 2)];
-      };
       var drawPathStroke = (path) => {
         if (path.length < 2) return;
         ctx.beginPath();
@@ -247,6 +329,16 @@
           ctx.lineTo(path[path.length - 1].x, path[path.length - 1].y);
         }
         ctx.stroke();
+      };
+      var drawHalfStroke = (path, color, width) => {
+        if (path.length < 2) return;
+        ctx.save();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = width;
+        ctx.lineCap = "round";
+        ctx.lineJoin = "round";
+        drawPathStroke(path);
+        ctx.restore();
       };
       var screenToMap = (clientX, clientY) => {
         const rect = canvas.getBoundingClientRect();
@@ -279,17 +371,19 @@
         const t = Math.min(1, Math.max(0, (logValue - logMin) / (logMax - logMin)));
         return MIN_LINK_WIDTH + (MAX_LINK_WIDTH - MIN_LINK_WIDTH) * t;
       };
-      var drawLink = (path, utilization, capacity, label) => {
+      var drawLink = (path, forwardUtilization, reverseUtilization, capacity, label) => {
         if (path.length < 2) return;
-        const color = utilToColor(utilization);
         const width = capacityToWidth(capacity);
-        ctx.strokeStyle = color;
-        ctx.lineWidth = width;
-        ctx.lineCap = "round";
-        ctx.lineJoin = "round";
-        drawPathStroke(path);
+        const { midpoint, firstHalf, secondHalf } = splitPathAtHalf(path);
+        const forwardPath = firstHalf;
+        const reversePath = secondHalf;
+        if (forwardPath.length >= 2) {
+          drawHalfStroke(forwardPath, utilToColor(forwardUtilization), width);
+        }
+        if (reversePath.length >= 2) {
+          drawHalfStroke(reversePath, utilToColor(reverseUtilization), width);
+        }
         if (label) {
-          const midpoint = getPathMidpoint(path);
           ctx.save();
           ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
           ctx.strokeStyle = "rgba(148, 163, 184, 0.7)";
@@ -376,11 +470,12 @@
           const toRouter = routerMap.get(link.to);
           if (!fromRouter || !toRouter) return;
           const metric = linkMetricsMap.get(link.id);
-          const utilization = metric?.aggregateUtilization ?? null;
+          const forwardUtil = interfaceUtilization(metric?.forward);
+          const reverseUtil = interfaceUtilization(metric?.reverse);
           const label = metric?.label ?? link.label;
           const capacity = linkCapacityMap.get(link.id) ?? null;
           const path = linkPathMap.get(link.id) ?? [fromRouter.position, toRouter.position];
-          drawLink(path, utilization, capacity, label);
+          drawLink(path, forwardUtil, reverseUtil, capacity, label);
         });
         topology.routers.forEach((router) => {
           const routerMetrics = metrics?.routers[router.id] ?? null;
@@ -406,50 +501,62 @@
           updateSidebarVisibility();
           return;
         }
-        const lastUpdated = metrics ? new Date(metrics.timestamp).toLocaleTimeString() : "Waiting for data\u2026";
+        const lastUpdatedRaw = metrics ? new Date(metrics.timestamp).toLocaleTimeString() : "Waiting for data\u2026";
+        const lastUpdated = safeText(lastUpdatedRaw);
         const linkRanking = metrics ? [...metrics.links].sort((a, b) => (b.aggregateUtilization ?? 0) - (a.aggregateUtilization ?? 0)).slice(0, 5) : [];
-        const linkList = linkRanking.length ? linkRanking.map(
-          (link) => `<li><span>${link.label ?? `${link.from} \u2192 ${link.to}`}</span><span class="metric">${formatPercent(link.aggregateUtilization)}</span></li>`
-        ).join("") : `<li>No link telemetry yet.</li>`;
+        const linkList = linkRanking.length ? linkRanking.map((link) => {
+          const fallbackLabel = `${link.from} \u2192 ${link.to}`;
+          const label = escapeHtml(link.label ?? fallbackLabel);
+          const metricValue = safeText(formatPercent(link.aggregateUtilization));
+          return `<li><span>${label}</span><span class="metric">${metricValue}</span></li>`;
+        }).join("") : `<li>No link telemetry yet.</li>`;
         const routerCards = topology.routers.map((router) => {
           const routerMetrics = metrics?.routers[router.id] ?? null;
           const status = routerMetrics?.status ?? "error";
+          const safeRouterLabel = escapeHtml(router.label);
+          const statusLabel = safeText(status.charAt(0).toUpperCase() + status.slice(1));
           const interfacesRows = router.interfaces.map((iface) => {
             const ifaceMetrics = routerMetrics?.interfaces[iface.name];
             const utilisation = ifaceMetrics && Number.isFinite(Math.max(ifaceMetrics.inUtilization, ifaceMetrics.outUtilization)) ? Math.max(ifaceMetrics.inUtilization, ifaceMetrics.outUtilization) : null;
+            const ifaceLabel = escapeHtml(iface.displayName ?? iface.name);
+            const upMetric = safeText(formatThroughput(ifaceMetrics?.outBps));
+            const downMetric = safeText(formatThroughput(ifaceMetrics?.inBps));
+            const ifaceError = ifaceMetrics?.error ? `<div class="iface-error">${escapeHtml(ifaceMetrics.error)}</div>` : "";
             return `<div class="iface-row">
-    <div class="iface-name">${iface.displayName ?? iface.name}</div>
+    <div class="iface-name">${ifaceLabel}</div>
     <div class="iface-bars">
         ${renderUtilBar(utilisation)}
     </div>
     <div class="iface-metrics">
-        <span class="metric up">\u2B06 ${formatThroughput(ifaceMetrics?.outBps)}</span>
-        <span class="metric down">\u2B07 ${formatThroughput(ifaceMetrics?.inBps)}</span>
+        <span class="metric up">\u2B06 ${upMetric}</span>
+        <span class="metric down">\u2B07 ${downMetric}</span>
     </div>
-    ${ifaceMetrics?.error ? `<div class="iface-error">${ifaceMetrics.error}</div>` : ""}
+    ${ifaceError}
 </div>`;
           }).join("");
-          const statusLabel = status.charAt(0).toUpperCase() + status.slice(1);
+          const routerError = routerMetrics?.error ? `<p class="router-error">${escapeHtml(routerMetrics.error)}</p>` : "";
           return `<section class="router-card status-${status}">
     <header>
-        <h3>${router.label}</h3>
+        <h3>${safeRouterLabel}</h3>
         <span class="status-pill">${statusLabel}</span>
     </header>
     <div class="router-body">
         ${interfacesRows}
     </div>
-    ${routerMetrics?.error ? `<p class="router-error">${routerMetrics.error}</p>` : ""}
+    ${routerError}
 </section>`;
         }).join("");
+        const legendHtml = UTILIZATION_BUCKETS.map(
+          (bucket) => `<span class="legend-item"><span class="legend-dot" style="background:${bucket.color}"></span>${escapeHtml(bucket.label)}</span>`
+        ).join("");
+        const safeTitle = escapeHtml(topology.title ?? "TS Weathermap");
         hud.innerHTML = `<header class="hud-header">
     <div>
-        <h1>${topology.title ?? "TS Weathermap"}</h1>
+        <h1>${safeTitle}</h1>
         <p class="hud-subtitle">Last updated ${lastUpdated}</p>
     </div>
     <div class="hud-legend">
-        ${UTILIZATION_BUCKETS.map(
-          (bucket) => `<span class="legend-item"><span class="legend-dot" style="background:${bucket.color}"></span>${bucket.label}</span>`
-        ).join("")}
+        ${legendHtml}
     </div>
     <div class="hud-actions">
         <button class="layout-toggle ${layoutMode ? "active" : ""}" data-action="toggle-layout">${layoutMode ? "Exit Layout Mode" : "Layout Mode"}</button>
@@ -665,6 +772,7 @@ ${layoutMode ? `<section class="layout-panel">
           return;
         }
         metrics = message;
+        rebuildLinkCapacities();
         renderHud();
         draw();
       };
@@ -686,6 +794,7 @@ ${layoutMode ? `<section class="layout-panel">
         }
         const data = await response.json();
         metrics = data;
+        rebuildLinkCapacities();
         renderHud();
         draw();
       };
@@ -711,7 +820,8 @@ ${layoutMode ? `<section class="layout-panel">
         })
       ).then(() => startWebSocket()).catch((err) => {
         console.error("Failed to initialise application", err);
-        hud.innerHTML = `<div class="hud-empty">Failed to load topology: ${err instanceof Error ? err.message : String(err)}</div>`;
+        const message = err instanceof Error ? err.message : String(err);
+        hud.innerHTML = `<div class="hud-empty">Failed to load topology: ${escapeHtml(message)}</div>`;
       });
     }
   });

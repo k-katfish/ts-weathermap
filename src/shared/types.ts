@@ -8,6 +8,7 @@ export interface InterfaceDefinition {
     displayName?: string;
     maxBandwidth?: number | null;
     speedOid?: string;
+    speedScale?: number;
 }
 
 export interface RouterDefinition {

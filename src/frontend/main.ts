@@ -162,24 +162,39 @@ const buildRouterMap = (routers: RouterDefinition[]) => {
     return map;
 };
 
+const interfaceDefinitionCapacity = (routerId: string, ifaceName: string): number | null => {
+    if (!topology) return null;
+    const router = topology.routers.find(candidate => candidate.id === routerId);
+    const iface = router?.interfaces.find(candidate => candidate.name === ifaceName);
+    return iface?.maxBandwidth ?? null;
+};
+
+const interfaceMetricCapacity = (routerId: string, ifaceName: string): number | null => {
+    const routerMetrics = metrics?.routers[routerId];
+    const ifaceMetrics = routerMetrics?.interfaces[ifaceName];
+    return ifaceMetrics?.maxBandwidth ?? null;
+};
+
 const rebuildLinkCapacities = () => {
     if (!topology) return;
-    const routerMap = buildRouterMap(topology.routers);
     const capacities: number[] = [];
     const map = new Map<string, number | null>();
 
     topology.links.forEach(link => {
-        const forwardRouter = routerMap.get(link.from);
-        const reverseRouter = routerMap.get(link.to);
-
-        const forwardCapacity =
-            forwardRouter?.interfaces.find(iface => iface.name === link.ifaceFrom)?.maxBandwidth ?? null;
-        const reverseCapacity =
-            reverseRouter?.interfaces.find(iface => iface.name === link.ifaceTo)?.maxBandwidth ?? null;
-
-        const candidates = [forwardCapacity, reverseCapacity].filter(
+        const forwardMetric = interfaceMetricCapacity(link.from, link.ifaceFrom);
+        const reverseMetric = interfaceMetricCapacity(link.to, link.ifaceTo);
+        let candidates = [forwardMetric, reverseMetric].filter(
             (value): value is number => typeof value === "number" && value > 0
         );
+
+        if (candidates.length === 0) {
+            const forwardDefinition = interfaceDefinitionCapacity(link.from, link.ifaceFrom);
+            const reverseDefinition = interfaceDefinitionCapacity(link.to, link.ifaceTo);
+            candidates = [forwardDefinition, reverseDefinition].filter(
+                (value): value is number => typeof value === "number" && value > 0
+            );
+        }
+
         const capacity = candidates.length ? Math.min(...candidates) : null;
         if (capacity) {
             capacities.push(capacity);
@@ -834,6 +849,7 @@ const handleServerMessage = (message: ServerMessage) => {
     }
 
     metrics = message;
+    rebuildLinkCapacities();
     renderHud();
     draw();
 };
@@ -857,6 +873,7 @@ const fetchInitialMetrics = async () => {
     }
     const data = (await response.json()) as MetricsPayload;
     metrics = data;
+    rebuildLinkCapacities();
     renderHud();
     draw();
 };

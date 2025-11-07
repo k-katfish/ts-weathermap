@@ -30,6 +30,7 @@ interface RawInterfaceConfig {
     oid_out: string;
     max_bandwidth?: number;
     oid_speed?: string;
+    oid_speed_scale?: number;
     display_name?: string;
 }
 
@@ -170,6 +171,9 @@ const normaliseRouters = (routers: Record<string, RawRouterConfig>) => {
                 throw new Error(`Interface "${iface.name}" on router "${routerId}" must define both oid_in and oid_out`);
             }
             const trimmedSpeedOid = iface.oid_speed?.trim() || undefined;
+            const hasSpeedScale = typeof iface.oid_speed_scale === "number" && Number.isFinite(iface.oid_speed_scale);
+            const speedScale =
+                trimmedSpeedOid && hasSpeedScale && iface.oid_speed_scale! > 0 ? iface.oid_speed_scale! : 1;
             const hasStaticBandwidth = typeof iface.max_bandwidth === "number" && iface.max_bandwidth > 0;
             if (!hasStaticBandwidth && !trimmedSpeedOid) {
                 throw new Error(
@@ -183,13 +187,15 @@ const normaliseRouters = (routers: Record<string, RawRouterConfig>) => {
                     oid_out: iface.oid_out,
                     max_bandwidth: hasStaticBandwidth ? iface.max_bandwidth : 0,
                     oid_speed: trimmedSpeedOid,
+                    oid_speed_scale: trimmedSpeedOid ? speedScale : undefined,
                     display_name: iface.display_name ?? iface.name
                 },
                 definition: {
                     name: iface.name,
                     displayName: iface.display_name ?? iface.name,
                     maxBandwidth: hasStaticBandwidth ? iface.max_bandwidth : null,
-                    speedOid: trimmedSpeedOid
+                    speedOid: trimmedSpeedOid,
+                    speedScale: trimmedSpeedOid ? speedScale : undefined
                 }
             };
         });

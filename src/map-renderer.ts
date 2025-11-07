@@ -51,19 +51,34 @@ const buildRouterMap = (routers: RouterDefinition[]) => {
     return map;
 };
 
-const computeLinkCapacities = (routers: RouterDefinition[], links: LinkDefinition[]) => {
+const computeLinkCapacities = (
+    routers: RouterDefinition[],
+    links: LinkDefinition[],
+    linkMetricsMap: Map<string, LinkMetrics>
+) => {
     const routerMap = buildRouterMap(routers);
     const map = new Map<string, number | null>();
     const capacities: number[] = [];
 
     links.forEach(link => {
-        const forwardRouter = routerMap.get(link.from);
-        const reverseRouter = routerMap.get(link.to);
-        const forwardCapacity = getInterfaceCapacity(forwardRouter, link.ifaceFrom);
-        const reverseCapacity = getInterfaceCapacity(reverseRouter, link.ifaceTo);
-        const candidates = [forwardCapacity, reverseCapacity].filter(
+        const metrics = linkMetricsMap.get(link.id);
+        const metricForward = metrics?.forward?.maxBandwidth ?? null;
+        const metricReverse = metrics?.reverse?.maxBandwidth ?? null;
+
+        let candidates = [metricForward, metricReverse].filter(
             (value): value is number => typeof value === "number" && value > 0
         );
+
+        if (candidates.length === 0) {
+            const forwardRouter = routerMap.get(link.from);
+            const reverseRouter = routerMap.get(link.to);
+            const forwardCapacity = getInterfaceCapacity(forwardRouter, link.ifaceFrom);
+            const reverseCapacity = getInterfaceCapacity(reverseRouter, link.ifaceTo);
+            candidates = [forwardCapacity, reverseCapacity].filter(
+                (value): value is number => typeof value === "number" && value > 0
+            );
+        }
+
         const capacity = candidates.length ? Math.min(...candidates) : null;
         if (capacity !== null) {
             capacities.push(capacity);
@@ -387,7 +402,7 @@ export const renderMapSnapshot = async (options: MapRenderOptions): Promise<stri
     const linkMetricsMap = new Map<string, LinkMetrics>();
     metrics.links.forEach(link => linkMetricsMap.set(link.id, link));
 
-    const { capacities, map: capacityMap } = computeLinkCapacities(topology.routers, topology.links);
+    const { capacities, map: capacityMap } = computeLinkCapacities(topology.routers, topology.links, linkMetricsMap);
     const capacityRange = capacities.length ? { min: Math.min(...capacities), max: Math.max(...capacities) } : null;
     const linkPaths = computeLinkPaths(topology);
 
