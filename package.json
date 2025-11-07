@@ -1,9 +1,9 @@
 {
   "name": "ts-weathermap",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Similar to the old PHP Network Weathermap project, but modern and written in TypeScript.",
-  "license": "ISC",
-  "author": "",
+  "license": "MIT",
+  "author": "k-katfish",
   "type": "commonjs",
   "main": "index.js",
   "scripts": {
