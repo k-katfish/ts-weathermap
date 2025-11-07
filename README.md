@@ -8,53 +8,43 @@ at-a-glance infrastructure health.
 
 ## Features
 
-- **Real-time telemetry** – The backend polls every configured router interface,
-  tracks 64-bit counters, and streams utilisation deltas over WebSockets.
-- **Config-driven topology** – Describe routers, their canvas positions, and
-  interconnecting links in `data/config.yaml`.
-- **Adaptive visuals** – The front-end auto-fits your background map,
-  colour-codes utilisation buckets, and surfaces hot links and interface stats
-  in an interactive heads-up display.
-- **Curved links** – Parallel links curve around each other automatically, and
-  you can override the path with custom waypoints when you need precise routing.
-- **Layout mode** – Drag routers directly on the canvas and copy the generated
-  coordinates back into `config.yaml`.
-- **Hot reloading** – Configuration changes are detected on the fly; connected
-  browsers receive updated topology metadata instantly.
-- **Shareable snapshots** – Every polling interval the backend exports a
-  rendered PNG to `/app/data/image_data/` and serves the latest image at
-  `/map.png` so you can expose a read-only view without credentials.
-
-## Getting Started
-
-```bash
-npm install
-npm run build
-npm start
-```
-
-Open your browser to `http://localhost:3000` to view the most recent rendered
-PNG (also available at `/map.png`). The interactive management UI now lives at
-`http://localhost:3000/manage`. By default the server reads
-`/app/data/config.yaml` and `/app/data/background.png`. The
-repository’s `data/` directory is copied into that location during Docker
-builds and is bind-mounted via `docker-compose.yml` for local development. If
-you prefer to run `npm start` directly, create a symlink or bind mount so that
-`/app/data` points to your desired config folder.
-
-- `PORT` – port for the HTTP/WebSocket server (defaults to `3000`)
+- **Real-time data updates**: Polls SNMP data from all configured endpoints at
+  a configured interval.
+- **Simple setup**: Everything lives in one glorious config.yaml file,
+  including routers, links, positions, and settings. No database required.
+- **Smart visuals**: Provide your own background.png; link positions line up
+  with your image coordinates.
+- **Customizable links**: Define your own link paths right in the config for
+  total layout control.
+- **Admin page**: Manage the app at `/manage`. You’ll want to secure this (and
+  the `/api` endpoint) behind Nginx with some authentication.
+- **Safe for sharing**: `/` and `/map.png` serve a read-only rendered map. No
+  sensitive data is exposed — just color-coded utilization and topology lines.
+  The map image updates automatically, and historical snapshots are saved for
+  later use (like building time-lapse animations!).
 
 ### Docker / Compose
 
-To run everything inside containers (recommended so `/app/data` is managed for
-you):
+Build and run the project using Docker and Docker Compose. Ensure you have
+Docker and Docker Compose installed. Then, you can use the provided
+`docker-compose.yml` file to pull the latest image (or use `docker-compose-local.yml`
+to build locally) and spin up the application.
 
 ```bash
-docker compose up --build
+git clone https://github.com/k-katfish/ts-weathermap.git
+cd ts-weathermap
+mkdir data
+# Copy your config.yaml and background.png into the data/ directory
+
+# Run with Docker Compose
+docker compose up -d
 ```
 
-This builds the image, binds `./data` to `/app/data`, and exposes the app on
-port `3000`.
+Just browse to `http://localhost:3000` to see the application in action.
+
+At this point it's _highly_ recommended that you throw nginx (or another proxy)
+in front of the app to handle TLS and authentication for the management UI and
+API endpoints. See [NGINX][#nginx-setup] below for a sample config.
 
 ### Snapshot Endpoint
 
@@ -62,16 +52,27 @@ Every poll the backend renders a PNG of the current map (background, links,
 routers, legend, timestamp) and writes it to `/app/data/image_data/` using the
 file name pattern `yyyy-mm-dd-hh-mm-ss.png`. The most recent image is available
 at `http://localhost:3000/map.png`, which you can serve publicly because it
-contains no SNMP credentials or raw topology data.
+contains no SNMP credentials, metrics, topology details, or sensitive info.
+
+This is great for embedding in dashboards, status pages, or even building
+time-lapse videos of your network health over time!
+
+Right now, the app doesn't do anything with the historical snapshots, but you
+can easily grab them from the `image_data/` folder inside the volume to make
+your own animations or archives.
+
+> NOTE! Beware of disk space usage, this app will generate images over time and
+> does not implement any pruning or cleanup logic. Consider setting up a cron
+> job or similar to delete old images.
 
 ## Configuration Overview
 
-All topology and polling details live in `data/config.yaml`, which is copied (or
-mounted) into `/app/data/config.yaml` at runtime. A minimal outline:
+All topology and polling details live in `data/config.yaml`, which is mounted
+into `/app/data/config.yaml` at runtime. A minimal outline:
 
 ```yaml
 meta:
-  title: "Sample Network Weathermap"
+  title: "My Weathermap"
   poll_interval_ms: 5000
 
 map:
@@ -93,6 +94,7 @@ routers:
         oid_out: .1.3.6.1.2.1.2.2.1.16.2
         max_bandwidth: 1000000000  # Optional static fallback (bits per second)
         oid_speed: .1.3.6.1.2.1.2.2.1.5.2  # Optional dynamic bandwidth OID
+        oid_speed_scale: 1000              # Multiply speed value before use
 
 links:
   - id: core-edge1
@@ -114,31 +116,21 @@ links:
 
 ### Tips
 
-- Place routers using the same coordinate system as your background image
-  (`map.size`).
+- Place routers using the same coordinate system as your background image. Also,
+  feel free to just make up some numbers, then use the editor to place them
+  visually and copy the coordinates back into the config later.
 - Each link references interfaces by name; validation errors surface in the
   server logs if something is misconfigured.
 - You can provide either a fixed `max_bandwidth` (in bits per second) or an
   `oid_speed` (or both). When an OID is supplied the poller refreshes the
   interface bandwidth every cycle and falls back to the static value if the OID
-  is missing or invalid.
+  is missing or invalid. Use `oid_speed_scale` to multiply the raw SNMP value
+  (helpful if the device reports Kbps/Mbps instead of bps).
 - `map.background` only accepts a file name. Any path segments are stripped so
   the asset must live alongside `config.yaml` in `/app/data`.
 - Links that share the same pair of routers are automatically fanned out with
   curved arcs. Add the optional `path` array (see above) if you need to draw
   very specific bends or detours.
-
-## Development
-
-- `npm run dev` – TypeScript compiler in watch mode.
-- `npm run build` – Bundles both backend and frontend with esbuild.
-- `npm start` – Launches the Express/WebSocket backend (requires a prior build).
-
-Hot reload behaviour:
-
-- The backend reloads `config.yaml` automatically.
-- Browsers receive the new topology immediately and reuse the active WebSocket
-  connection.
 
 ### Layout Mode
 
@@ -147,6 +139,8 @@ Hot reload behaviour:
   overlaps.
 - Copy the generated JSON snippet (bottom of the HUD) into `config.yaml` to
   persist coordinates.
+
+![Layout Mode HUD](ak-sample-edit.png)
 
 ## License
 
