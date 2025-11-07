@@ -1,4 +1,4 @@
-import express from "express";
+import express, { type Request, type Response } from "express";
 import { WebSocket, WebSocketServer } from "ws";
 import fs from "fs";
 import yaml from "js-yaml";
@@ -14,17 +14,22 @@ import {
     TopologyPayload
 } from "./shared/types.js";
 import { pollRouters, PollSnapshot, RouterConfig } from "./snmp.js";
+import { renderMapSnapshot } from "./map-renderer.js";
 
 const PORT = Number(process.env.PORT) || 3000;
-const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.resolve(process.cwd(), "data");
-const CONFIG_PATH = process.env.CONFIG_PATH ? path.resolve(process.env.CONFIG_PATH) : path.join(DATA_DIR, "config.yaml");
+const DATA_DIR = path.resolve("/app/data");
+const CONFIG_PATH = path.join(DATA_DIR, "config.yaml");
+const IMAGE_DIR = path.join(DATA_DIR, "image_data");
 const BACKGROUND_ROUTE = "/background.png";
+const MAX_SAVED_MAP_IMAGES = 50;
+let latestImagePath: string | null = null;
 
 interface RawInterfaceConfig {
     name: string;
     oid_in: string;
     oid_out: string;
-    max_bandwidth: number;
+    max_bandwidth?: number;
+    oid_speed?: string;
     display_name?: string;
 }
 
@@ -81,6 +86,48 @@ const ensureDirectory = (dir: string) => {
     }
 };
 
+const ensureImageDirectory = () => {
+    if (!fs.existsSync(IMAGE_DIR)) {
+        fs.mkdirSync(IMAGE_DIR, { recursive: true });
+    }
+};
+
+const collectSnapshotFiles = () => {
+    if (!fs.existsSync(IMAGE_DIR)) {
+        return [];
+    }
+    return fs
+        .readdirSync(IMAGE_DIR)
+        .filter(file => file.endsWith(".png"))
+        .map(file => {
+            const fullPath = path.join(IMAGE_DIR, file);
+            try {
+                const stats = fs.statSync(fullPath);
+                return { fullPath, mtime: stats.mtimeMs };
+            } catch {
+                return null;
+            }
+        })
+        .filter((entry): entry is { fullPath: string; mtime: number } => Boolean(entry))
+        .sort((a, b) => b.mtime - a.mtime);
+};
+
+const pruneSnapshots = () => {
+    const files = collectSnapshotFiles();
+    if (files.length === 0) {
+        latestImagePath = null;
+        return;
+    }
+    latestImagePath = files[0].fullPath;
+    files.slice(MAX_SAVED_MAP_IMAGES).forEach(file => {
+        fs.unlink(file.fullPath, err => {
+            if (err) {
+                console.warn(`Failed to remove old snapshot ${file.fullPath}`, err);
+            }
+        });
+    });
+};
+
 const readConfigFile = (filePath: string): RawConfig => {
     if (!fs.existsSync(filePath)) {
         throw new Error(`Configuration file not found at ${filePath}`);
@@ -97,10 +144,10 @@ const readConfigFile = (filePath: string): RawConfig => {
 };
 
 const resolveDataPath = (maybeRelative: string | undefined): string => {
-    if (!maybeRelative) {
-        return path.join(DATA_DIR, "background.png");
-    }
-    return path.isAbsolute(maybeRelative) ? maybeRelative : path.join(DATA_DIR, maybeRelative);
+    const fallback = "background.png";
+    const trimmed = maybeRelative?.trim();
+    const filename = trimmed ? path.basename(trimmed) : fallback;
+    return path.join(DATA_DIR, filename);
 };
 
 const normaliseRouters = (routers: Record<string, RawRouterConfig>) => {
@@ -115,17 +162,43 @@ const normaliseRouters = (routers: Record<string, RawRouterConfig>) => {
             throw new Error(`Router "${routerId}" must define at least one interface`);
         }
 
+        const normalizedInterfaces = router.interfaces.map(iface => {
+            if (!iface.name) {
+                throw new Error(`Router "${routerId}" has an interface without a name`);
+            }
+            if (!iface.oid_in || !iface.oid_out) {
+                throw new Error(`Interface "${iface.name}" on router "${routerId}" must define both oid_in and oid_out`);
+            }
+            const trimmedSpeedOid = iface.oid_speed?.trim() || undefined;
+            const hasStaticBandwidth = typeof iface.max_bandwidth === "number" && iface.max_bandwidth > 0;
+            if (!hasStaticBandwidth && !trimmedSpeedOid) {
+                throw new Error(
+                    `Interface "${iface.name}" on router "${routerId}" must define either max_bandwidth (> 0) or oid_speed`
+                );
+            }
+            return {
+                poll: {
+                    name: iface.name,
+                    oid_in: iface.oid_in,
+                    oid_out: iface.oid_out,
+                    max_bandwidth: hasStaticBandwidth ? iface.max_bandwidth : 0,
+                    oid_speed: trimmedSpeedOid,
+                    display_name: iface.display_name ?? iface.name
+                },
+                definition: {
+                    name: iface.name,
+                    displayName: iface.display_name ?? iface.name,
+                    maxBandwidth: hasStaticBandwidth ? iface.max_bandwidth : null,
+                    speedOid: trimmedSpeedOid
+                }
+            };
+        });
+
         routerPollConfig[routerId] = {
             ip: router.ip,
             community: router.community,
             label: router.label ?? routerId,
-            interfaces: router.interfaces.map(iface => ({
-                name: iface.name,
-                oid_in: iface.oid_in,
-                oid_out: iface.oid_out,
-                max_bandwidth: iface.max_bandwidth,
-                display_name: iface.display_name ?? iface.name
-            }))
+            interfaces: normalizedInterfaces.map(entry => entry.poll)
         };
 
         routerDefinitions.push({
@@ -135,11 +208,7 @@ const normaliseRouters = (routers: Record<string, RawRouterConfig>) => {
                 x: router.position?.x ?? 0,
                 y: router.position?.y ?? 0
             },
-            interfaces: router.interfaces.map(iface => ({
-                name: iface.name,
-                displayName: iface.display_name ?? iface.name,
-                maxBandwidth: iface.max_bandwidth
-            }))
+            interfaces: normalizedInterfaces.map(entry => entry.definition)
         });
     }
 
@@ -190,6 +259,7 @@ const normaliseLinks = (links: RawLinkConfig[] | undefined, routers: Record<stri
 
 const loadRuntimeConfig = (): RuntimeConfig => {
     ensureDirectory(DATA_DIR);
+    ensureImageDirectory();
     const raw = readConfigFile(CONFIG_PATH);
     const { routerPollConfig, routerDefinitions } = normaliseRouters(raw.routers);
     const links = normaliseLinks(raw.links, raw.routers);
@@ -241,7 +311,7 @@ const toRouterMetrics = (snapshot: PollSnapshot, topology: TopologyDefinition): 
                         inUtilization: 0,
                         outUtilization: 0,
                         status: "error",
-                        maxBandwidth: iface.maxBandwidth,
+                        maxBandwidth: iface.maxBandwidth ?? 0,
                         fresh: false,
                         error: "No SNMP data"
                     };
@@ -261,7 +331,7 @@ const toRouterMetrics = (snapshot: PollSnapshot, topology: TopologyDefinition): 
                     inUtilization: 0,
                     outUtilization: 0,
                     status: "error",
-                    maxBandwidth: iface.maxBandwidth,
+                    maxBandwidth: iface.maxBandwidth ?? 0,
                     fresh: false,
                     error: "Interface missing from SNMP poll"
                 };
@@ -326,11 +396,27 @@ const toLinkMetrics = (routers: Record<string, RouterMetrics>, links: LinkDefini
 const runtime: { config: RuntimeConfig } = {
     config: loadRuntimeConfig()
 };
+pruneSnapshots();
 let latestMetrics: MetricsPayload | null = null;
 
-const app = express();
+const saveSnapshotImage = async (payload: MetricsPayload) => {
+    try {
+        const imagePath = await renderMapSnapshot({
+            topology: runtime.config.topology,
+            metrics: payload,
+            backgroundPath: runtime.config.backgroundPath,
+            outputDir: IMAGE_DIR
+        });
+        if (imagePath) {
+            latestImagePath = imagePath;
+            pruneSnapshots();
+        }
+    } catch (error) {
+        console.error("Failed to render map snapshot", error);
+    }
+};
 
-app.use(express.static("src/frontend"));
+const app = express();
 
 app.get(BACKGROUND_ROUTE, (_, res) => {
     res.sendFile(runtime.config.backgroundPath, err => {
@@ -339,6 +425,24 @@ app.get(BACKGROUND_ROUTE, (_, res) => {
         }
     });
 });
+
+const sendLatestSnapshot = (res: Response) => {
+    if (!latestImagePath) {
+        res.status(404).send("Map image not available");
+        return;
+    }
+    res.sendFile(latestImagePath, err => {
+        if (err) {
+            res.status(404).send("Map image not available");
+        }
+    });
+};
+
+app.get("/", (_req, res) => {
+    sendLatestSnapshot(res);
+});
+
+app.use("/manage", express.static("src/frontend"));
 
 app.get("/api/topology", (_req, res) => {
     res.json(runtime.config.topology);
@@ -354,6 +458,10 @@ app.get("/api/metrics", (_req, res) => {
         return;
     }
     res.json(latestMetrics);
+});
+
+app.get("/map.png", (_req, res) => {
+    sendLatestSnapshot(res);
 });
 
 const server = app.listen(PORT, () => {
@@ -397,6 +505,7 @@ const pollLoop = async (): Promise<void> => {
         };
         latestMetrics = payload;
         broadcast(payload);
+        await saveSnapshotImage(payload);
     } catch (error) {
         console.error("Failed to poll routers", error);
     } finally {
@@ -409,6 +518,7 @@ pollLoop().catch(err => console.error("Initial poll loop failed", err));
 fs.watchFile(CONFIG_PATH, { interval: 2000 }, () => {
     try {
         runtime.config = loadRuntimeConfig();
+        pruneSnapshots();
         console.log("Configuration reloaded");
         broadcastTopology();
     } catch (error) {

@@ -9,6 +9,7 @@ import type {
     ServerMessage,
     TopologyDefinition
 } from "../shared/types.js";
+import { splitPathAtHalf } from "../shared/path-utils.js";
 
 const canvas = document.querySelector("canvas") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d", { alpha: false });
@@ -51,6 +52,18 @@ const pointerState: {
     pointerId: null,
     offset: null
 };
+
+const htmlEscapeMap: Record<string, string> = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+};
+
+const escapeHtml = (value: string): string => value.replace(/[&<>"']/g, char => htmlEscapeMap[char] ?? char);
+
+const safeText = (value: string | number | null | undefined): string => escapeHtml(String(value ?? ""));
 
 const backgroundImage = new Image();
 let backgroundLoaded = false;
@@ -104,6 +117,11 @@ const utilToColor = (utilization: number | null): string => {
     const bucket =
         UTILIZATION_BUCKETS.find(range => utilization >= range.min && utilization < range.max) ?? UTILIZATION_BUCKETS[UTILIZATION_BUCKETS.length - 1];
     return bucket.color;
+};
+
+const interfaceUtilization = (iface: InterfaceMetrics | null | undefined): number | null => {
+    if (!iface) return null;
+    return Math.max(iface.inUtilization, iface.outUtilization);
 };
 
 const formatPercent = (value: number | null | undefined): string => {
@@ -284,19 +302,6 @@ const drawBackground = () => {
     }
 };
 
-const getPathMidpoint = (path: Position[]): Position => {
-    if (path.length === 0) {
-        return { x: 0, y: 0 };
-    }
-    if (path.length === 2) {
-        return {
-            x: (path[0].x + path[1].x) / 2,
-            y: (path[0].y + path[1].y) / 2
-        };
-    }
-    return path[Math.floor(path.length / 2)];
-};
-
 const drawPathStroke = (path: Position[]) => {
     if (path.length < 2) return;
     ctx.beginPath();
@@ -314,6 +319,17 @@ const drawPathStroke = (path: Position[]) => {
         ctx.lineTo(path[path.length - 1].x, path[path.length - 1].y);
     }
     ctx.stroke();
+};
+
+const drawHalfStroke = (path: Position[], color: string, width: number) => {
+    if (path.length < 2) return;
+    ctx.save();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = width;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    drawPathStroke(path);
+    ctx.restore();
 };
 
 const screenToMap = (clientX: number, clientY: number): Position => {
@@ -352,22 +368,26 @@ const capacityToWidth = (capacity: number | null): number => {
 
 const drawLink = (
     path: Position[],
-    utilization: number | null,
+    forwardUtilization: number | null,
+    reverseUtilization: number | null,
     capacity: number | null,
     label?: string
 ) => {
     if (path.length < 2) return;
-    const color = utilToColor(utilization);
     const width = capacityToWidth(capacity);
+    const { midpoint, firstHalf, secondHalf } = splitPathAtHalf(path);
+    const forwardPath = firstHalf;
+    const reversePath = secondHalf;
 
-    ctx.strokeStyle = color;
-    ctx.lineWidth = width;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    drawPathStroke(path);
+    if (forwardPath.length >= 2) {
+        drawHalfStroke(forwardPath, utilToColor(forwardUtilization), width);
+    }
+
+    if (reversePath.length >= 2) {
+        drawHalfStroke(reversePath, utilToColor(reverseUtilization), width);
+    }
 
     if (label) {
-        const midpoint = getPathMidpoint(path);
         ctx.save();
         ctx.fillStyle = "rgba(15, 23, 42, 0.85)";
         ctx.strokeStyle = "rgba(148, 163, 184, 0.7)";
@@ -468,11 +488,12 @@ const draw = () => {
         const toRouter = routerMap.get(link.to);
         if (!fromRouter || !toRouter) return;
         const metric = linkMetricsMap.get(link.id);
-        const utilization = metric?.aggregateUtilization ?? null;
+        const forwardUtil = interfaceUtilization(metric?.forward);
+        const reverseUtil = interfaceUtilization(metric?.reverse);
         const label = metric?.label ?? link.label;
         const capacity = linkCapacityMap.get(link.id) ?? null;
         const path = linkPathMap.get(link.id) ?? [fromRouter.position, toRouter.position];
-        drawLink(path, utilization, capacity, label);
+        drawLink(path, forwardUtil, reverseUtil, capacity, label);
     });
 
     topology.routers.forEach(router => {
@@ -503,17 +524,20 @@ const renderHud = () => {
         return;
     }
 
-    const lastUpdated = metrics ? new Date(metrics.timestamp).toLocaleTimeString() : "Waiting for data…";
+    const lastUpdatedRaw = metrics ? new Date(metrics.timestamp).toLocaleTimeString() : "Waiting for data…";
+    const lastUpdated = safeText(lastUpdatedRaw);
     const linkRanking = metrics
         ? [...metrics.links].sort((a, b) => (b.aggregateUtilization ?? 0) - (a.aggregateUtilization ?? 0)).slice(0, 5)
         : [];
 
     const linkList = linkRanking.length
         ? linkRanking
-              .map(
-                  link =>
-                      `<li><span>${link.label ?? `${link.from} → ${link.to}`}</span><span class="metric">${formatPercent(link.aggregateUtilization)}</span></li>`
-              )
+              .map(link => {
+                  const fallbackLabel = `${link.from} → ${link.to}`;
+                  const label = escapeHtml(link.label ?? fallbackLabel);
+                  const metricValue = safeText(formatPercent(link.aggregateUtilization));
+                  return `<li><span>${label}</span><span class="metric">${metricValue}</span></li>`;
+              })
               .join("")
         : `<li>No link telemetry yet.</li>`;
 
@@ -521,6 +545,8 @@ const renderHud = () => {
         .map(router => {
             const routerMetrics: RouterMetrics | null = metrics?.routers[router.id] ?? null;
             const status = routerMetrics?.status ?? "error";
+            const safeRouterLabel = escapeHtml(router.label);
+            const statusLabel = safeText(status.charAt(0).toUpperCase() + status.slice(1));
 
             const interfacesRows = router.interfaces
                 .map(iface => {
@@ -529,43 +555,51 @@ const renderHud = () => {
                         ifaceMetrics && Number.isFinite(Math.max(ifaceMetrics.inUtilization, ifaceMetrics.outUtilization))
                             ? Math.max(ifaceMetrics.inUtilization, ifaceMetrics.outUtilization)
                             : null;
+                    const ifaceLabel = escapeHtml(iface.displayName ?? iface.name);
+                    const upMetric = safeText(formatThroughput(ifaceMetrics?.outBps));
+                    const downMetric = safeText(formatThroughput(ifaceMetrics?.inBps));
+                    const ifaceError = ifaceMetrics?.error ? `<div class="iface-error">${escapeHtml(ifaceMetrics.error)}</div>` : "";
                     return `<div class="iface-row">
-    <div class="iface-name">${iface.displayName ?? iface.name}</div>
+    <div class="iface-name">${ifaceLabel}</div>
     <div class="iface-bars">
         ${renderUtilBar(utilisation)}
     </div>
     <div class="iface-metrics">
-        <span class="metric up">⬆ ${formatThroughput(ifaceMetrics?.outBps)}</span>
-        <span class="metric down">⬇ ${formatThroughput(ifaceMetrics?.inBps)}</span>
+        <span class="metric up">⬆ ${upMetric}</span>
+        <span class="metric down">⬇ ${downMetric}</span>
     </div>
-    ${ifaceMetrics?.error ? `<div class="iface-error">${ifaceMetrics.error}</div>` : ""}
+    ${ifaceError}
 </div>`;
                 })
                 .join("");
 
-            const statusLabel = status.charAt(0).toUpperCase() + status.slice(1);
+            const routerError = routerMetrics?.error ? `<p class="router-error">${escapeHtml(routerMetrics.error)}</p>` : "";
             return `<section class="router-card status-${status}">
     <header>
-        <h3>${router.label}</h3>
+        <h3>${safeRouterLabel}</h3>
         <span class="status-pill">${statusLabel}</span>
     </header>
     <div class="router-body">
         ${interfacesRows}
     </div>
-    ${routerMetrics?.error ? `<p class="router-error">${routerMetrics.error}</p>` : ""}
+    ${routerError}
 </section>`;
         })
         .join("");
 
+    const legendHtml = UTILIZATION_BUCKETS.map(
+        bucket =>
+            `<span class="legend-item"><span class="legend-dot" style="background:${bucket.color}"></span>${escapeHtml(bucket.label)}</span>`
+    ).join("");
+    const safeTitle = escapeHtml(topology.title ?? "TS Weathermap");
+
     hud.innerHTML = `<header class="hud-header">
     <div>
-        <h1>${topology.title ?? "TS Weathermap"}</h1>
+        <h1>${safeTitle}</h1>
         <p class="hud-subtitle">Last updated ${lastUpdated}</p>
     </div>
     <div class="hud-legend">
-        ${UTILIZATION_BUCKETS.map(
-            bucket => `<span class="legend-item"><span class="legend-dot" style="background:${bucket.color}"></span>${bucket.label}</span>`
-        ).join("")}
+        ${legendHtml}
     </div>
     <div class="hud-actions">
         <button class="layout-toggle ${layoutMode ? "active" : ""}" data-action="toggle-layout">${layoutMode ? "Exit Layout Mode" : "Layout Mode"}</button>
@@ -856,5 +890,6 @@ void fetchInitialTopology()
     .then(() => startWebSocket())
     .catch(err => {
         console.error("Failed to initialise application", err);
-        hud.innerHTML = `<div class="hud-empty">Failed to load topology: ${err instanceof Error ? err.message : String(err)}</div>`;
+        const message = err instanceof Error ? err.message : String(err);
+        hud.innerHTML = `<div class="hud-empty">Failed to load topology: ${escapeHtml(message)}</div>`;
     });

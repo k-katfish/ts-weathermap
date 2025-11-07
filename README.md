@@ -4,7 +4,7 @@ A modern TypeScript re-imagining of the classic network weathermap: real-time
 SNMP polling, dynamic back-end streaming, and a canvas-based front-end for
 at-a-glance infrastructure health.
 
-> **Disclaimer**: This project was generated almost entirely using AI tools.
+![Sample Weathermap](ak-sample.png)
 
 ## Features
 
@@ -21,6 +21,9 @@ at-a-glance infrastructure health.
   coordinates back into `config.yaml`.
 - **Hot reloading** – Configuration changes are detected on the fly; connected
   browsers receive updated topology metadata instantly.
+- **Shareable snapshots** – Every polling interval the backend exports a
+  rendered PNG to `/app/data/image_data/` and serves the latest image at
+  `/map.png` so you can expose a read-only view without credentials.
 
 ## Getting Started
 
@@ -30,17 +33,41 @@ npm run build
 npm start
 ```
 
-Open your browser to `http://localhost:3000` to view the live map. By default
-the server expects assets and configuration in `data/`, but you can override
-with:
+Open your browser to `http://localhost:3000` to view the most recent rendered
+PNG (also available at `/map.png`). The interactive management UI now lives at
+`http://localhost:3000/manage`. By default the server reads
+`/app/data/config.yaml` and `/app/data/background.png`. The
+repository’s `data/` directory is copied into that location during Docker
+builds and is bind-mounted via `docker-compose.yml` for local development. If
+you prefer to run `npm start` directly, create a symlink or bind mount so that
+`/app/data` points to your desired config folder.
 
-- `DATA_DIR` – root directory for `config.yaml` and `background.png`
-- `CONFIG_PATH` – explicit path to a YAML configuration file
 - `PORT` – port for the HTTP/WebSocket server (defaults to `3000`)
+
+### Docker / Compose
+
+To run everything inside containers (recommended so `/app/data` is managed for
+you):
+
+```bash
+docker compose up --build
+```
+
+This builds the image, binds `./data` to `/app/data`, and exposes the app on
+port `3000`.
+
+### Snapshot Endpoint
+
+Every poll the backend renders a PNG of the current map (background, links,
+routers, legend, timestamp) and writes it to `/app/data/image_data/` using the
+file name pattern `yyyy-mm-dd-hh-mm-ss.png`. The most recent image is available
+at `http://localhost:3000/map.png`, which you can serve publicly because it
+contains no SNMP credentials or raw topology data.
 
 ## Configuration Overview
 
-All topology and polling details live in `data/config.yaml`. A minimal outline:
+All topology and polling details live in `data/config.yaml`, which is copied (or
+mounted) into `/app/data/config.yaml` at runtime. A minimal outline:
 
 ```yaml
 meta:
@@ -64,7 +91,8 @@ routers:
         display_name: "Core → Edge 1"
         oid_in: .1.3.6.1.2.1.2.2.1.10.2
         oid_out: .1.3.6.1.2.1.2.2.1.16.2
-        max_bandwidth: 1000000000  # bits per second
+        max_bandwidth: 1000000000  # Optional static fallback (bits per second)
+        oid_speed: .1.3.6.1.2.1.2.2.1.5.2  # Optional dynamic bandwidth OID
 
 links:
   - id: core-edge1
@@ -90,8 +118,12 @@ links:
   (`map.size`).
 - Each link references interfaces by name; validation errors surface in the
   server logs if something is misconfigured.
-- Bandwidth values should be provided in bits per second for accurate
-  utilisation percentages.
+- You can provide either a fixed `max_bandwidth` (in bits per second) or an
+  `oid_speed` (or both). When an OID is supplied the poller refreshes the
+  interface bandwidth every cycle and falls back to the static value if the OID
+  is missing or invalid.
+- `map.background` only accepts a file name. Any path segments are stripped so
+  the asset must live alongside `config.yaml` in `/app/data`.
 - Links that share the same pair of routers are automatically fanned out with
   curved arcs. Add the optional `path` array (see above) if you need to draw
   very specific bends or detours.

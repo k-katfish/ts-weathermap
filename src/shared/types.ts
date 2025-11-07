@@ -6,7 +6,8 @@ export interface Position {
 export interface InterfaceDefinition {
     name: string;
     displayName?: string;
-    maxBandwidth: number;
+    maxBandwidth?: number | null;
+    speedOid?: string;
 }
 
 export interface RouterDefinition {
